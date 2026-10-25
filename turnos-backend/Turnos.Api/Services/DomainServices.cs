@@ -138,19 +138,54 @@ public sealed class ClientService(IConfiguration config, DataProtectionService c
           from app.clients where deleted_at is null order by created_at desc limit 1000
           """);
     }
-    public async Task<Guid> CreateAsync(ClientRequest x, Guid actor) {\n        Validate(x);
-        if(x.Identification.Length is <10 or >13 || !x.Identification.All(char.IsDigit)) throw new ArgumentException("La identificación debe contener entre 10 y 13 dígitos.");
-        if(!System.Text.RegularExpressions.Regex.IsMatch(x.Phone,@"^09[0-9]{8,11}$")) throw new ArgumentException("El teléfono debe iniciar en 09 y contener al menos 10 dígitos.");
-        if(x.Address.Length is <20 or >100 || x.AddressReference.Length is <20 or >100) throw new ArgumentException("Dirección y referencia deben contener entre 20 y 100 caracteres.");
+    public async Task<Guid> CreateAsync(ClientRequest x, Guid actor) {
+        Validate(x);
         await using var db=await Db.Source(config).OpenConnectionAsync();
         var id=Guid.NewGuid();
         await db.ExecuteAsync("""
           insert into app.clients(id,first_name,last_name,identification_cipher,identification_lookup,email_cipher,email_lookup,phone,address,address_reference,created_by)
           values(@id,@first,@last,@identCipher,@identLookup,@emailCipher,@emailLookup,@phone,@address,@reference,@actor)
           """,new{id,first=x.FirstName.Trim(),last=x.LastName.Trim(),identCipher=crypto.Encrypt(x.Identification),identLookup=crypto.Lookup(x.Identification),
-            emailCipher=crypto.Encrypt(x.Email),emailLookup=crypto.Lookup(x.Email),x.Phone,x.Address,x.AddressReference,actor});
+            emailCipher=crypto.Encrypt(x.Email),emailLookup=crypto.Lookup(x.Email),phone=x.Phone.Trim(),address=x.Address.Trim(),reference=x.AddressReference.Trim(),actor});
         await audit.WriteAsync(actor,"CREATE","clients",id.ToString());
         return id;
+    }
+    public async Task UpdateAsync(Guid id, ClientRequest x, Guid actor) {
+        Validate(x);
+        await using var db=await Db.Source(config).OpenConnectionAsync();
+        var n=await db.ExecuteAsync("""
+          update app.clients set first_name=@first,last_name=@last,identification_cipher=@identCipher,identification_lookup=@identLookup,
+          email_cipher=@emailCipher,email_lookup=@emailLookup,phone=@phone,address=@address,address_reference=@reference,updated_at=now()
+          where id=@id and deleted_at is null
+          """,new{id,first=x.FirstName.Trim(),last=x.LastName.Trim(),identCipher=crypto.Encrypt(x.Identification),identLookup=crypto.Lookup(x.Identification),
+            emailCipher=crypto.Encrypt(x.Email),emailLookup=crypto.Lookup(x.Email),phone=x.Phone.Trim(),address=x.Address.Trim(),reference=x.AddressReference.Trim()});
+        if(n==0) throw new KeyNotFoundException("Cliente no encontrado.");
+        await audit.WriteAsync(actor,"UPDATE","clients",id.ToString());
+    }
+    public async Task SoftDeleteAsync(Guid id, Guid actor) {
+        await using var db=await Db.Source(config).OpenConnectionAsync();
+        var n=await db.ExecuteAsync("update app.clients set deleted_at=now(),is_active=false,updated_at=now() where id=@id and deleted_at is null",new{id});
+        if(n==0) throw new KeyNotFoundException("Cliente no encontrado.");
+        await audit.WriteAsync(actor,"DELETE","clients",id.ToString());
+    }
+    public async Task<object> ImportAsync(IReadOnlyList<ClientRequest> items, Guid actor) {
+        if(items.Count is <1 or >1000) throw new ArgumentException("La carga debe contener entre 1 y 1000 clientes por lote.");
+        var created=0; var errors=new List<object>();
+        for(var i=0;i<items.Count;i++) {
+            try { await CreateAsync(items[i],actor); created++; }
+            catch(Exception ex) when(ex is ArgumentException or NpgsqlException) {
+                errors.Add(new{row=i+2,message=ex is PostgresException pe && pe.SqlState=="23505"?"Identificación o correo duplicado.":ex.Message});
+            }
+        }
+        await audit.WriteAsync(actor,"BULK_IMPORT","clients",null,new{received=items.Count,created,failed=errors.Count});
+        return new{received=items.Count,created,failed=errors.Count,errors};
+    }
+    private static void Validate(ClientRequest x) {
+        if(string.IsNullOrWhiteSpace(x.FirstName)||string.IsNullOrWhiteSpace(x.LastName)) throw new ArgumentException("Nombres y apellidos son obligatorios.");
+        if(x.Identification.Length is <10 or >13 || !x.Identification.All(char.IsDigit)) throw new ArgumentException("La identificación debe contener entre 10 y 13 dígitos.");
+        if(!System.Text.RegularExpressions.Regex.IsMatch(x.Email, @"^[^@\s]+@[^@\s]+\.[^@\s]+$")) throw new ArgumentException("Correo inválido.");
+        if(!System.Text.RegularExpressions.Regex.IsMatch(x.Phone,@"^09[0-9]{8,11}$")) throw new ArgumentException("El teléfono debe iniciar en 09 y contener entre 10 y 13 dígitos.");
+        if(x.Address.Length is <20 or >100 || x.AddressReference.Length is <20 or >100) throw new ArgumentException("Dirección y referencia deben contener entre 20 y 100 caracteres.");
     }
 }
 public sealed record ClientRequest(string FirstName,string LastName,string Identification,string Email,string Phone,string Address,string AddressReference);
