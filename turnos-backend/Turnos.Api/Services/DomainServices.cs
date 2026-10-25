@@ -8,11 +8,14 @@ public sealed class UserService(IConfiguration config, DataProtectionService cry
 {
     public async Task<IEnumerable<object>> ListAsync() {
         await using var db=await Db.Source(config).OpenConnectionAsync();
-        return await db.QueryAsync("""
-          select u.id,u.username,u.first_name as "firstName",u.last_name as "lastName",r.code as role,
-                 u.status,u.is_active as "isActive",u.is_blocked as "isBlocked",u.created_at as "createdAt"
+        var rows=await db.QueryAsync<UserListRow>("""
+          select u.id,u.username,u.first_name as "FirstName",u.last_name as "LastName",r.code as "Role",
+                 u.identification_cipher as "IdentificationCipher",u.email_cipher as "EmailCipher",
+                 u.status,u.is_active as "IsActive",u.is_blocked as "IsBlocked",u.created_at as "CreatedAt"
           from app.users u join app.roles r on r.id=u.role_id where u.deleted_at is null order by u.created_at desc
           """);
+        return rows.Select(u=>new {u.Id,u.Username,u.FirstName,u.LastName,u.Role,u.Status,u.IsActive,u.IsBlocked,u.CreatedAt,
+          identification=crypto.Decrypt(u.IdentificationCipher),email=crypto.Decrypt(u.EmailCipher)});
     }
     public async Task<Guid> CreateAsync(CreateUserRequest x, Guid actor, string actorRole) {
         ValidateUsername(x.Username); ValidatePassword(x.Password);
@@ -84,7 +87,7 @@ public sealed class UserService(IConfiguration config, DataProtectionService cry
             throw new ArgumentException("La contraseña debe tener 8-30 caracteres, al menos una mayúscula y un número.");
     }
 }
-public sealed record CreateUserRequest(string Username,string Password,string Identification,string Email,string FirstName,string LastName,string Role);\npublic sealed record UpdateUserRequest(string Username,string? Password,string Identification,string Email,string FirstName,string LastName,string Role);
+public sealed record UserListRow(Guid Id,string Username,string FirstName,string LastName,string Role,byte[] IdentificationCipher,byte[] EmailCipher,string Status,bool IsActive,bool IsBlocked,DateTime CreatedAt);\npublic sealed record CreateUserRequest(string Username,string Password,string Identification,string Email,string FirstName,string LastName,string Role);\npublic sealed record UpdateUserRequest(string Username,string? Password,string Identification,string Email,string FirstName,string LastName,string Role);
 
 public sealed class TurnService(IConfiguration config, AuditService audit)
 {
@@ -133,10 +136,13 @@ public sealed class ClientService(IConfiguration config, DataProtectionService c
 {
     public async Task<IEnumerable<object>> ListAsync() {
         await using var db=await Db.Source(config).OpenConnectionAsync();
-        return await db.QueryAsync("""
-          select id,first_name as "firstName",last_name as "lastName",phone,address,address_reference as "addressReference",is_active as "isActive",created_at as "createdAt"
+        var rows=await db.QueryAsync<ClientListRow>("""
+          select id,first_name as "FirstName",last_name as "LastName",identification_cipher as "IdentificationCipher",
+          email_cipher as "EmailCipher",phone,address,address_reference as "AddressReference",is_active as "IsActive",created_at as "CreatedAt"
           from app.clients where deleted_at is null order by created_at desc limit 1000
           """);
+        return rows.Select(x=>new {x.Id,x.FirstName,x.LastName,identification=crypto.Decrypt(x.IdentificationCipher),
+          email=crypto.Decrypt(x.EmailCipher),x.Phone,x.Address,x.AddressReference,x.IsActive,x.CreatedAt});
     }
     public async Task<Guid> CreateAsync(ClientRequest x, Guid actor) {
         Validate(x);
@@ -188,7 +194,7 @@ public sealed class ClientService(IConfiguration config, DataProtectionService c
         if(x.Address.Length is <20 or >100 || x.AddressReference.Length is <20 or >100) throw new ArgumentException("Dirección y referencia deben contener entre 20 y 100 caracteres.");
     }
 }
-public sealed record ClientRequest(string FirstName,string LastName,string Identification,string Email,string Phone,string Address,string AddressReference);
+public sealed record ClientListRow(Guid Id,string FirstName,string LastName,byte[] IdentificationCipher,byte[] EmailCipher,string Phone,string Address,string AddressReference,bool IsActive,DateTime CreatedAt);\npublic sealed record ClientRequest(string FirstName,string LastName,string Identification,string Email,string Phone,string Address,string AddressReference);
 
 public sealed class CashBoxService(IConfiguration config, AuditService audit)
 {
