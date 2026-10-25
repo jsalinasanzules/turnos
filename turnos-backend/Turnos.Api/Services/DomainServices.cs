@@ -17,7 +17,7 @@ public sealed class UserService(IConfiguration config, DataProtectionService cry
     public async Task<Guid> CreateAsync(CreateUserRequest x, Guid actor, string actorRole) {
         ValidateUsername(x.Username); ValidatePassword(x.Password);
         if (x.Identification.Length is <10 or >13 || !x.Identification.All(char.IsDigit)) throw new ArgumentException("La identificación debe tener entre 10 y 13 dígitos.");
-        if (!System.Text.RegularExpressions.Regex.IsMatch(x.Email, @"^[^@s]+@[^@s]+.[^@s]+$")) throw new ArgumentException("Correo inválido.");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(x.Email, @"^[^@\s]+@[^@\s]+\.[^@\s]+$")) throw new ArgumentException("Correo inválido.");
         await using var db=await Db.Source(config).OpenConnectionAsync();
         var role = await db.QuerySingleOrDefaultAsync<short>("select id from app.roles where code=@role and is_active", new { role=x.Role });
         if(role==0) throw new ArgumentException("Rol no válido.");
@@ -33,6 +33,32 @@ public sealed class UserService(IConfiguration config, DataProtectionService cry
             status=actorRole=="ADMINISTRADOR"?"APPROVED":"PENDING",actor });
         await audit.WriteAsync(actor,"CREATE","users",id.ToString(),new { x.Username,x.Role });
         return id;
+    }
+    public async Task UpdateAsync(Guid id, UpdateUserRequest x, Guid actor, string actorRole) {
+        if(actorRole!="ADMINISTRADOR") throw new UnauthorizedAccessException("Solo el administrador puede modificar usuarios.");
+        ValidateUsername(x.Username);
+        if(!string.IsNullOrWhiteSpace(x.Password)) ValidatePassword(x.Password);
+        if(x.Identification.Length is <10 or >13 || !x.Identification.All(char.IsDigit)) throw new ArgumentException("La identificación debe tener entre 10 y 13 dígitos.");
+        if(!System.Text.RegularExpressions.Regex.IsMatch(x.Email, @"^[^@\s]+@[^@\s]+\.[^@\s]+$")) throw new ArgumentException("Correo inválido.");
+        await using var db=await Db.Source(config).OpenConnectionAsync();
+        var roleId=await db.QuerySingleOrDefaultAsync<short>("select id from app.roles where code=@role and is_active",new{role=x.Role});
+        if(roleId==0) throw new ArgumentException("Rol no válido.");
+        var sql=@"update app.users set username=@username,role_id=@roleId,identification_cipher=@identCipher,identification_lookup=@identLookup,email_cipher=@emailCipher,email_lookup=@emailLookup,first_name=@first,last_name=@last,updated_at=now() " +
+            (string.IsNullOrWhiteSpace(x.Password) ? "" : ",password_hash=@hash,failed_login_attempts=0,is_blocked=false ") +
+            "where id=@id and deleted_at is null";
+        var args=new {id,username=x.Username,roleId,identCipher=crypto.Encrypt(x.Identification),identLookup=crypto.Lookup(x.Identification),emailCipher=crypto.Encrypt(x.Email),emailLookup=crypto.Lookup(x.Email),first=x.FirstName.Trim(),last=x.LastName.Trim(),hash=string.IsNullOrWhiteSpace(x.Password)?null:BCrypt.Net.BCrypt.HashPassword(x.Password,12)};
+        if(await db.ExecuteAsync(sql,args)==0) throw new KeyNotFoundException("Usuario no encontrado.");
+        await audit.WriteAsync(actor,"UPDATE","users",id.ToString(),new{x.Username,x.Role});
+    }
+    public async Task<object> ImportAsync(IReadOnlyList<CreateUserRequest> items, Guid actor, string actorRole) {
+        if(items.Count is <1 or >500) throw new ArgumentException("La carga debe contener entre 1 y 500 usuarios por lote.");
+        var created=0; var errors=new List<object>();
+        for(var i=0;i<items.Count;i++) {
+            try { await CreateAsync(items[i],actor,actorRole); created++; }
+            catch(Exception ex) when(ex is ArgumentException or NpgsqlException) { errors.Add(new{row=i+2,message=ex is PostgresException pe && pe.SqlState=="23505"?"Usuario, identificación o correo duplicado.":ex.Message}); }
+        }
+        await audit.WriteAsync(actor,"BULK_IMPORT","users",null,new{received=items.Count,created,failed=errors.Count});
+        return new{received=items.Count,created,failed=errors.Count,errors};
     }
     public async Task ApproveAsync(Guid id, Guid actor, bool approve) {
         await using var db=await Db.Source(config).OpenConnectionAsync();
@@ -58,7 +84,7 @@ public sealed class UserService(IConfiguration config, DataProtectionService cry
             throw new ArgumentException("La contraseña debe tener 8-30 caracteres, al menos una mayúscula y un número.");
     }
 }
-public sealed record CreateUserRequest(string Username,string Password,string Identification,string Email,string FirstName,string LastName,string Role);
+public sealed record CreateUserRequest(string Username,string Password,string Identification,string Email,string FirstName,string LastName,string Role);\npublic sealed record UpdateUserRequest(string Username,string? Password,string Identification,string Email,string FirstName,string LastName,string Role);
 
 public sealed class TurnService(IConfiguration config, AuditService audit)
 {
@@ -112,7 +138,7 @@ public sealed class ClientService(IConfiguration config, DataProtectionService c
           from app.clients where deleted_at is null order by created_at desc limit 1000
           """);
     }
-    public async Task<Guid> CreateAsync(ClientRequest x, Guid actor) {
+    public async Task<Guid> CreateAsync(ClientRequest x, Guid actor) {\n        Validate(x);
         if(x.Identification.Length is <10 or >13 || !x.Identification.All(char.IsDigit)) throw new ArgumentException("La identificación debe contener entre 10 y 13 dígitos.");
         if(!System.Text.RegularExpressions.Regex.IsMatch(x.Phone,@"^09[0-9]{8,11}$")) throw new ArgumentException("El teléfono debe iniciar en 09 y contener al menos 10 dígitos.");
         if(x.Address.Length is <20 or >100 || x.AddressReference.Length is <20 or >100) throw new ArgumentException("Dirección y referencia deben contener entre 20 y 100 caracteres.");
