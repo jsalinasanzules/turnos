@@ -35,6 +35,8 @@ if (signingKey.Length < 32 || encryptionKey.Length < 32)
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
+    // Preserve JWT claim names such as "sub" and "role" so they match TokenValidationParameters.
+    options.MapInboundClaims = false;
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true, ValidIssuer = builder.Configuration["Security:Issuer"] ?? "Turnos.Api",
