@@ -55,16 +55,28 @@ public static class RequestUser
 {
     public static Guid Id(System.Security.Claims.ClaimsPrincipal user) =>
         Guid.TryParse(user.FindFirst("uid")?.Value, out var id) ? id : throw new UnauthorizedAccessException();
-    public static string Role(System.Security.Claims.ClaimsPrincipal user) => user.FindFirst("role")?.Value ?? "";
+    public static string Role(System.Security.Claims.ClaimsPrincipal user) =>
+        (user.FindFirst("role")?.Value
+         ?? user.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value
+         ?? user.FindFirst("http://schemas.microsoft.com/ws/2008/06/identity/claims/role")?.Value
+         ?? string.Empty).Trim().ToUpperInvariant();
 }
 
-public sealed class AuthService(IConfiguration config, AuditService audit, ILogger<AuthService> logger)
+public sealed class AuthService(IConfiguration config, DataProtectionService crypto, AuditService audit, ILogger<AuthService> logger)
 {
     public async Task<object> LoginAsync(string username, string password, string? ip, string? agent) {
         await using var db = await Db.Source(config).OpenConnectionAsync();
         var user = await db.QuerySingleOrDefaultAsync<LoginRow>("""
-          select u.id, u.username, u.password_hash, u.first_name, u.last_name, u.failed_login_attempts,
-                 u.is_blocked, u.is_active, u.status, r.code as role
+          select u.id as "Id",
+                 u.username as "Username",
+                 u.password_hash as "PasswordHash",
+                 u.first_name as "FirstName",
+                 u.last_name as "LastName",
+                 u.failed_login_attempts as "FailedLoginAttempts",
+                 u.is_blocked as "IsBlocked",
+                 u.is_active as "IsActive",
+                 u.status as "Status",
+                 r.code as "Role"
           from app.users u join app.roles r on r.id=u.role_id
           where lower(u.username)=lower(@username) and u.deleted_at is null
           """, new { username });
