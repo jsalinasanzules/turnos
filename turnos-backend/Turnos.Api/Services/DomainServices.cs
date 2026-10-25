@@ -87,7 +87,9 @@ public sealed class UserService(IConfiguration config, DataProtectionService cry
             throw new ArgumentException("La contraseña debe tener 8-30 caracteres, al menos una mayúscula y un número.");
     }
 }
-public sealed record UserListRow(Guid Id,string Username,string FirstName,string LastName,string Role,byte[] IdentificationCipher,byte[] EmailCipher,string Status,bool IsActive,bool IsBlocked,DateTime CreatedAt);\npublic sealed record CreateUserRequest(string Username,string Password,string Identification,string Email,string FirstName,string LastName,string Role);\npublic sealed record UpdateUserRequest(string Username,string? Password,string Identification,string Email,string FirstName,string LastName,string Role);
+public sealed record UserListRow(Guid Id,string Username,string FirstName,string LastName,string Role,byte[] IdentificationCipher,byte[] EmailCipher,string Status,bool IsActive,bool IsBlocked,DateTime CreatedAt);
+public sealed record CreateUserRequest(string Username,string Password,string Identification,string Email,string FirstName,string LastName,string Role);
+public sealed record UpdateUserRequest(string Username,string? Password,string Identification,string Email,string FirstName,string LastName,string Role);
 
 public sealed class TurnService(IConfiguration config, AuditService audit)
 {
@@ -194,7 +196,8 @@ public sealed class ClientService(IConfiguration config, DataProtectionService c
         if(x.Address.Length is <20 or >100 || x.AddressReference.Length is <20 or >100) throw new ArgumentException("Dirección y referencia deben contener entre 20 y 100 caracteres.");
     }
 }
-public sealed record ClientListRow(Guid Id,string FirstName,string LastName,byte[] IdentificationCipher,byte[] EmailCipher,string Phone,string Address,string AddressReference,bool IsActive,DateTime CreatedAt);\npublic sealed record ClientRequest(string FirstName,string LastName,string Identification,string Email,string Phone,string Address,string AddressReference);
+public sealed record ClientListRow(Guid Id,string FirstName,string LastName,byte[] IdentificationCipher,byte[] EmailCipher,string Phone,string Address,string AddressReference,bool IsActive,DateTime CreatedAt);
+public sealed record ClientRequest(string FirstName,string LastName,string Identification,string Email,string Phone,string Address,string AddressReference);
 
 public sealed class CashBoxService(IConfiguration config, AuditService audit)
 {
