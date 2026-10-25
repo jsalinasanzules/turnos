@@ -13,6 +13,8 @@ interface Row extends Record<string, any> {
  first_name?: string;
  lastName?: string;
  last_name?: string;
+ address?: string;
+ addressReference?: string;
  role?: string;
  roleCode?: string;
  role_code?: string;
